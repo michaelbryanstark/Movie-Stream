@@ -10,6 +10,7 @@ Your existing netflix_app.py (admin CRUD) can keep running on port 5000.
 """
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -23,7 +24,8 @@ DB_PATH = Path(__file__).parent / "team_netflix.db"
 app = Flask(__name__)
 # Set SECRET_KEY in the environment to keep sessions across restarts.
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                  MAX_CONTENT_LENGTH=3 * 1024 * 1024)
 
 # Fixed whitelist: table/column names are never taken from user input.
 KINDS = {
@@ -31,6 +33,17 @@ KINDS = {
     "show": {"table": "tv_show", "actors": "tv_actors", "directors": "tv_directors", "col": "tv_show_id"},
 }
 FLAGS = {"liked": "is_liked", "watched": "is_watched"}
+
+MAX_PROFILES = 5
+# Pages that only need a logged-in account (no profile picked yet).
+ACCOUNT_ONLY = {"profiles", "pick_profile", "logout", "manage_profiles", "new_profile",
+                "edit_profile", "delete_profile"}
+# Picture: blank, an http(s) URL, or a file name / path ending in an image extension.
+AVATAR_DIR = Path(__file__).parent / "static" / "avatars"
+AVATAR_URL = "/static/avatars/"
+MAX_UPLOAD = 2 * 1024 * 1024
+PIC_OK = re.compile(
+    r"^(https?://\S+|/?[\w./-]+\.(png|jpe?g|gif|webp|svg))$", re.I)
 
 
 def get_db():
@@ -91,8 +104,10 @@ def shared():
 
 # ---------- authentication ----------
 PUBLIC = {"login", "signup", "static"}
-DUMMY_HASH = generate_password_hash("not-a-real-password")  # equalises timing for unknown emails
-FAILS = {}  # email -> (count, first_failure_time); in-memory, resets on restart
+# equalises timing for unknown emails
+DUMMY_HASH = generate_password_hash("not-a-real-password")
+# email -> (count, first_failure_time); in-memory, resets on restart
+FAILS = {}
 
 
 @app.before_request
@@ -102,7 +117,7 @@ def require_login():
     db = get_db()
     if not current_account(db):
         return redirect(url_for("login"))
-    if request.endpoint not in ("profiles", "pick_profile", "logout") and not current_profile(db):
+    if request.endpoint not in ACCOUNT_ONLY and not current_profile(db):
         return redirect(url_for("profiles"))
 
 
@@ -125,7 +140,8 @@ def verify_password(db, row, pw):
         return check_password_hash(stored, pw)
     # Legacy plain-text password from the seed data: compare, then upgrade to a hash.
     if hmac.compare_digest(stored.encode(), pw.encode()):
-        db.execute("UPDATE account SET password = ? WHERE id = ?", (generate_password_hash(pw), row["id"]))
+        db.execute("UPDATE account SET password = ? WHERE id = ?",
+                   (generate_password_hash(pw), row["id"]))
         db.commit()
         return True
     return False
@@ -145,7 +161,8 @@ def login():
         if too_many_failures(email):
             error = "Too many failed attempts. Try again in a few minutes."
         else:
-            row = db.execute("SELECT id, password FROM account WHERE lower(email) = ?", (email,)).fetchone()
+            row = db.execute(
+                "SELECT id, password FROM account WHERE lower(email) = ?", (email,)).fetchone()
             if row is None:
                 check_password_hash(DUMMY_HASH, pw)
                 ok = False
@@ -163,7 +180,8 @@ def login():
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     db, error, email = get_db(), None, ""
-    plans = db.execute("SELECT id, subscription_type, subscription_price FROM subscription ORDER BY id").fetchall()
+    plans = db.execute(
+        "SELECT id, subscription_type, subscription_price FROM subscription ORDER BY id").fetchall()
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         pw = request.form.get("password", "")
@@ -178,8 +196,10 @@ def signup():
         elif db.execute("SELECT 1 FROM account WHERE lower(email) = ?", (email,)).fetchone():
             error = "That email is already registered."
         else:
-            aid = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM account").fetchone()[0]
-            pid = db.execute("SELECT COALESCE(MAX(profile_id), 0) + 1 FROM profile").fetchone()[0]
+            aid = db.execute(
+                "SELECT COALESCE(MAX(id), 0) + 1 FROM account").fetchone()[0]
+            pid = db.execute(
+                "SELECT COALESCE(MAX(profile_id), 0) + 1 FROM profile").fetchone()[0]
             db.execute(
                 "INSERT INTO account (id, email, password, phone_number, subscription_id, account_created) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -228,14 +248,16 @@ def home():
     for k, meta in KINDS.items():
         if kind and kind != k:
             continue
-        sql, args = f"SELECT id, title, duration, genre, poster_url FROM {meta['table']} WHERE 1=1", []
+        sql, args = f"SELECT id, title, duration, genre, poster_url FROM {meta['table']} WHERE 1=1", [
+        ]
         if q:
             sql += " AND title LIKE ?"
             args.append(f"%{q}%")
         if genre:
             sql += " AND genre = ?"
             args.append(genre)
-        items += [dict(r, kind=k) for r in db.execute(sql + " ORDER BY title", args)]
+        items += [dict(r, kind=k)
+                  for r in db.execute(sql + " ORDER BY title", args)]
     genres = sorted({r[0] for m in KINDS.values() for r in db.execute(
         f"SELECT DISTINCT genre FROM {m['table']} WHERE genre IS NOT NULL AND genre != ''")})
     st = status_sets(db, current_account(db))
@@ -248,7 +270,8 @@ def title(kind, tid):
     if kind not in KINDS:
         abort(404)
     m, db = KINDS[kind], get_db()
-    item = db.execute(f"SELECT id, title, duration, genre, poster_url, backdrop_url FROM {m['table']} WHERE id = ?", (tid,)).fetchone()
+    item = db.execute(
+        f"SELECT id, title, duration, genre, poster_url, backdrop_url FROM {m['table']} WHERE id = ?", (tid,)).fetchone()
     if item is None:
         abort(404)
     cast = [r[0] for r in db.execute(
@@ -271,13 +294,193 @@ def toggle(what, kind, tid):
     if not acct:
         abort(403)
     col, flag = KINDS[kind]["col"], FLAGS[what]
-    row = db.execute(f"SELECT {flag} FROM {what} WHERE account_id = ? AND {col} = ?", (acct, tid)).fetchone()
+    row = db.execute(
+        f"SELECT {flag} FROM {what} WHERE account_id = ? AND {col} = ?", (acct, tid)).fetchone()
     if row is None:
-        db.execute(f"INSERT INTO {what} (account_id, {flag}, {col}) VALUES (?, 1, ?)", (acct, tid))
+        db.execute(
+            f"INSERT INTO {what} (account_id, {flag}, {col}) VALUES (?, 1, ?)", (acct, tid))
     else:
-        db.execute(f"UPDATE {what} SET {flag} = 1 - {flag} WHERE account_id = ? AND {col} = ?", (acct, tid))
+        db.execute(
+            f"UPDATE {what} SET {flag} = 1 - {flag} WHERE account_id = ? AND {col} = ?", (acct, tid))
     db.commit()
     return redirect(request.referrer or url_for("title", kind=kind, tid=tid))
+
+
+def own_profile(db, pid):
+    return db.execute(
+        "SELECT profile_id, profile_name, profile_picture, is_kid_profile FROM profile "
+        "WHERE profile_id = ? AND account_id = ?", (pid, current_account(db))).fetchone()
+
+
+def sniff_image(data):
+    """Identify the real image type from the file's first bytes (never trust the file name).
+    SVG is deliberately not allowed: it can carry scripts."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def save_upload(data, ext):
+    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{secrets.token_hex(16)}.{ext}"
+    (AVATAR_DIR / name).write_bytes(data)
+    return AVATAR_URL + name
+
+
+def cleanup_picture(db, url):
+    """Delete an uploaded avatar file once no profile uses it any more."""
+    if not url or not url.startswith(AVATAR_URL):
+        return
+    name = url[len(AVATAR_URL):]
+    if not re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|gif|webp)", name):
+        return  # only ever remove files this app generated
+    if db.execute("SELECT 1 FROM profile WHERE profile_picture = ?", (url,)).fetchone():
+        return
+    (AVATAR_DIR / name).unlink(missing_ok=True)
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    return ("That file is too large (2 MB maximum). Go back and choose a smaller image.", 413)
+
+
+def read_profile_form(form, files):
+    """Returns (name, picture, kid, error, upload). upload is (bytes, ext) or None;
+    the caller saves it only after everything validates."""
+    name = form.get("profile_name", "").strip()
+    pic = form.get("profile_picture", "").strip()
+    kid = 1 if form.get("is_kid_profile") else 0
+    error, upload = None, None
+    if not name:
+        error = "Give the profile a name."
+    elif len(name) > 30:
+        error = "Profile names can be at most 30 characters."
+    elif pic and (len(pic) > 500 or not PIC_OK.match(pic)):
+        error = "Picture must be an image URL (https://...) or left blank."
+    f = files.get("picture_file")
+    if not error and f and f.filename:
+        data = f.read(MAX_UPLOAD + 1)
+        if len(data) > MAX_UPLOAD:
+            error = "That image is larger than 2 MB."
+        elif sniff_image(data) is None:
+            error = "Upload a PNG, JPG, GIF or WebP image."
+        else:
+            upload = (data, sniff_image(data))
+    if form.get("remove_picture") and not upload:
+        pic = ""
+    return name, pic or None, kid, error, upload
+
+
+@app.get("/profiles/manage")
+def manage_profiles():
+    db = get_db()
+    rows = db.execute(
+        "SELECT profile_id, profile_name, profile_picture, is_kid_profile FROM profile "
+        "WHERE account_id = ? ORDER BY profile_id", (current_account(db),)).fetchall()
+    return render_template_string(PAGE, view="profiles", plist=rows, manage=True,
+                                  can_add=len(rows) < MAX_PROFILES)
+
+
+@app.route("/profiles/new", methods=["GET", "POST"])
+def new_profile():
+    db, error = get_db(), None
+    acct = current_account(db)
+    count = db.execute(
+        "SELECT COUNT(*) FROM profile WHERE account_id = ?", (acct,)).fetchone()[0]
+    if count >= MAX_PROFILES:
+        abort(403)
+    form = {"profile_name": "", "profile_picture": "", "is_kid_profile": 0}
+    if request.method == "POST":
+        name, pic, kid, error, upload = read_profile_form(
+            request.form, request.files)
+        form = {"profile_name": name,
+                "profile_picture": pic or "", "is_kid_profile": kid}
+        if not error:
+            if upload:
+                pic = save_upload(*upload)
+            pid = db.execute(
+                "SELECT COALESCE(MAX(profile_id), 0) + 1 FROM profile").fetchone()[0]
+            db.execute(
+                "INSERT INTO profile (account_id, profile_id, profile_name, profile_picture, is_kid_profile) "
+                "VALUES (?, ?, ?, ?, ?)", (acct, pid, name, pic, kid))
+            db.commit()
+            return redirect(url_for("manage_profiles"))
+    return render_template_string(PAGE, view="profile_form", form=form, error=error, editing=None, can_delete=False)
+
+
+@app.route("/profiles/<int:pid>/edit", methods=["GET", "POST"])
+def edit_profile(pid):
+    db, error = get_db(), None
+    row = own_profile(db, pid)
+    if row is None:
+        abort(404)
+    form = {"profile_name": row["profile_name"], "profile_picture": row["profile_picture"] or "",
+            "is_kid_profile": row["is_kid_profile"]}
+    if request.method == "POST":
+        name, pic, kid, error, upload = read_profile_form(
+            request.form, request.files)
+        form = {"profile_name": name,
+                "profile_picture": pic or "", "is_kid_profile": kid}
+        if not error:
+            if upload:
+                pic = save_upload(*upload)
+            db.execute("UPDATE profile SET profile_name = ?, profile_picture = ?, is_kid_profile = ? "
+                       "WHERE profile_id = ? AND account_id = ?", (name, pic, kid, pid, current_account(db)))
+            db.commit()
+            if row["profile_picture"] != pic:
+                cleanup_picture(db, row["profile_picture"])
+            return redirect(url_for("manage_profiles"))
+    count = db.execute("SELECT COUNT(*) FROM profile WHERE account_id = ?",
+                       (current_account(db),)).fetchone()[0]
+    return render_template_string(PAGE, view="profile_form", form=form, error=error, editing=row,
+                                  can_delete=count > 1)
+
+
+@app.post("/profiles/<int:pid>/delete")
+def delete_profile(pid):
+    db = get_db()
+    acct = current_account(db)
+    row = own_profile(db, pid)
+    if row is None:
+        abort(404)
+    count = db.execute(
+        "SELECT COUNT(*) FROM profile WHERE account_id = ?", (acct,)).fetchone()[0]
+    if count <= 1:
+        abort(400)  # an account always keeps at least one profile
+    db.execute(
+        "DELETE FROM profile WHERE profile_id = ? AND account_id = ?", (pid, acct))
+    db.commit()
+    cleanup_picture(db, row["profile_picture"])
+    if session.get("profile_id") == pid:
+        session.pop("profile_id", None)
+    return redirect(url_for("manage_profiles"))
+
+
+@app.get("/mylist")
+def mylist():
+    db = get_db()
+    acct = current_account(db)
+    tab = request.args.get("tab", "liked")
+    if tab not in FLAGS:
+        tab = "liked"
+    lists = {}
+    for what, flag in FLAGS.items():          # names come from the fixed whitelists above
+        items = []
+        for k, m in KINDS.items():
+            items += [dict(r, kind=k) for r in db.execute(
+                f"SELECT t.id, t.title, t.duration, t.genre, t.poster_url FROM {what} f "
+                f"JOIN {m['table']} t ON t.id = f.{m['col']} "
+                f"WHERE f.account_id = ? AND f.{flag} = 1", (acct,))]
+        items.sort(key=lambda i: (i["title"] or "").lower())
+        lists[what] = items
+    return render_template_string(PAGE, view="mylist", tab=tab, items=lists[tab],
+                                  counts={w: len(v) for w, v in lists.items()})
 
 
 PAGE = """
@@ -316,11 +519,20 @@ main{max-width:1200px;margin:0 auto;padding:1rem 1.5rem 3rem}
 .detail{display:flex;flex-wrap:wrap;gap:2rem}.detail .poster{width:260px;border-radius:10px}
 .detail h1{margin:.2rem 0 .5rem}.chips{display:flex;gap:.5rem;flex-wrap:wrap;margin:.4rem 0 1rem}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:.25rem .8rem;font-size:.85rem}
+.who a{display:block;text-align:center}.who button{text-align:center}
+.av.add{background:var(--card);border:2px dashed var(--line);color:var(--muted)}
+.tabs{display:flex;gap:.6rem;margin-bottom:1.2rem}
+.tabs a{padding:.4rem 1rem;border-radius:99px;border:1px solid var(--line)}.tabs a.on{background:#fff;color:#000}
+.tile form{padding:0 .7rem .7rem}.tile form button{width:100%;font-size:.85rem}
+.auth input[type=checkbox]{width:auto;margin-right:.5rem}.row{display:flex;gap:.6rem;margin-top:1rem}
+button.danger{color:#ff6b6b;border-color:#ff6b6b;background:none}
 </style></head><body>
 <header>
   <a class="brand" href="{{ url_for('home') }}">TEAM NETFLIX</a>
   {% if acct %}
     {% if prof %}<span class="chip">{% if prof.profile_picture %}<img class="avatar" src="{{ prof.profile_picture }}" alt="" onerror="this.remove()">{% endif %}{{ prof.profile_name }}{% if prof.is_kid_profile %} (kids){% endif %}</span>
+    <a class="muted" href="{{ url_for('mylist') }}">My list</a>
+    <a class="muted" href="{{ url_for('edit_profile', pid=prof.profile_id) }}">Edit profile</a>
     <a class="muted" href="{{ url_for('profiles') }}">Switch profile</a>{% endif %}
     <form method="post" action="{{ url_for('logout') }}"><button>Sign out</button></form>
   {% endif %}
@@ -350,14 +562,58 @@ main{max-width:1200px;margin:0 auto;padding:1rem 1.5rem 3rem}
     <p class="muted">Already a member? <a style="text-decoration:underline" href="{{ url_for('login') }}">Sign in</a></p>
   </form>
 {% elif view == 'profiles' %}
-  <h2 style="text-align:center;margin:3rem 0 2rem">Who's watching?</h2>
+  <h2 style="text-align:center;margin:3rem 0 2rem">{{ 'Manage profiles' if manage else "Who's watching?" }}</h2>
   <div class="who">
     {% for p in plist %}
-    <form method="post" action="{{ url_for('pick_profile', pid=p.profile_id) }}"><button>
+    {% if manage %}<a href="{{ url_for('edit_profile', pid=p.profile_id) }}">
+    {% else %}<form method="post" action="{{ url_for('pick_profile', pid=p.profile_id) }}"><button>{% endif %}
       <div class="av" style="background:hsl({{ hue(p.profile_name) }},45%,35%)">{% if p.profile_picture %}<img src="{{ p.profile_picture }}" alt="" onerror="this.remove()">{% endif %}{{ p.profile_name[:1] }}</div>
-      {{ p.profile_name }}{% if p.is_kid_profile %} &middot; Kids{% endif %}</button></form>
+      {{ p.profile_name }}{% if p.is_kid_profile %} &middot; Kids{% endif %}{% if manage %}<br><span class="muted">&#9998; Edit</span>{% endif %}
+    {% if manage %}</a>{% else %}</button></form>{% endif %}
     {% endfor %}
+    {% if manage and can_add %}<a href="{{ url_for('new_profile') }}"><div class="av add">+</div>Add profile</a>{% endif %}
   </div>
+  <p style="text-align:center;margin-top:2rem">
+    {% if manage %}<a class="muted" style="text-decoration:underline" href="{{ url_for('profiles') }}">Done</a>
+    {% else %}<a class="muted" style="text-decoration:underline" href="{{ url_for('manage_profiles') }}">Manage profiles</a>{% endif %}</p>
+{% elif view == 'profile_form' %}
+  <form class="auth" method="post" enctype="multipart/form-data">
+    <h2>{{ 'Edit profile' if editing else 'Add profile' }}</h2>
+    {% if error %}<p class="err">{{ error }}</p>{% endif %}
+    <label for="profile_name">Name</label>
+    <input id="profile_name" name="profile_name" maxlength="30" value="{{ form.profile_name }}" required autofocus>
+    {% if form.profile_picture %}<div class="av" style="width:90px;height:90px;margin:1rem 0 0;background:hsl({{ hue(form.profile_name) }},45%,35%)"><img src="{{ form.profile_picture }}" alt="Current picture" onerror="this.remove()"></div>
+    <label style="margin-top:.4rem"><input type="checkbox" name="remove_picture" value="1">Remove current picture</label>{% endif %}
+    <label for="picture_file">Upload a picture (PNG, JPG, GIF or WebP, up to 2 MB)</label>
+    <input id="picture_file" name="picture_file" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+    <label for="profile_picture">...or paste an image URL (optional)</label>
+    <input id="profile_picture" name="profile_picture" maxlength="500" value="{{ form.profile_picture }}" placeholder="https://...">
+    <label><input type="checkbox" name="is_kid_profile" value="1" {{ 'checked' if form.is_kid_profile }}>Kids profile</label>
+    <div class="row"><button class="primary">Save</button>
+      <a href="{{ url_for('manage_profiles') }}"><button type="button">Cancel</button></a></div>
+  </form>
+  {% if editing and can_delete %}
+  <form class="auth" style="margin-top:0" method="post" action="{{ url_for('delete_profile', pid=editing.profile_id) }}"
+        onsubmit="return confirm('Delete this profile?')">
+    <button class="danger" style="width:100%">Delete profile</button>
+  </form>{% endif %}
+{% elif view == 'mylist' %}
+  <h2>My list</h2>
+  <div class="tabs">
+    <a class="{{ 'on' if tab == 'liked' }}" href="{{ url_for('mylist', tab='liked') }}">&#9829; Liked ({{ counts.liked }})</a>
+    <a class="{{ 'on' if tab == 'watched' }}" href="{{ url_for('mylist', tab='watched') }}">&#10003; Watched ({{ counts.watched }})</a>
+  </div>
+  {% if items %}<div class="grid">
+    {% for i in items %}
+    <div class="tile">
+      <a href="{{ url_for('title', kind=i.kind, tid=i.id) }}">
+        <div class="poster" style="background:hsl({{ hue(i.genre) }},45%,28%)">{% if i.poster_url %}<img src="{{ i.poster_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}{{ i.title[:1] }}</div>
+        <div class="meta"><b>{{ i.title }}</b>
+          <span class="muted">{{ 'Film' if i.kind == 'film' else 'Series' }}{% if i.genre %} · {{ i.genre }}{% endif %}</span></div></a>
+      <form method="post" action="{{ url_for('toggle', what=tab, kind=i.kind, tid=i.id) }}"><button>Remove from {{ tab }}</button></form>
+    </div>
+    {% endfor %}</div>
+  {% else %}<p class="muted">Nothing here yet. Open a title and use the Like or Watched button.</p>{% endif %}
 {% elif view == 'home' %}
   <form class="filters" method="get">
     <input name="q" value="{{ q }}" placeholder="Search titles" type="search">
@@ -405,6 +661,7 @@ main{max-width:1200px;margin:0 auto;padding:1rem 1.5rem 3rem}
 </main></body></html>
 """
 
+
 def ensure_image_columns():
     """Add the image columns if the database predates them (same as add_images.sql; safe to repeat)."""
     wanted = {"film": ("poster_url", "backdrop_url"), "tv_show": ("poster_url", "backdrop_url"),
@@ -414,7 +671,8 @@ def ensure_image_columns():
         have = {r[1] for r in db.execute(f'PRAGMA table_info("{table}")')}
         for col in cols:
             if col not in have:
-                db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" VARCHAR(500)')
+                db.execute(
+                    f'ALTER TABLE "{table}" ADD COLUMN "{col}" VARCHAR(500)')
                 print(f"Added column {table}.{col}")
     db.commit()
     db.close()
@@ -422,7 +680,8 @@ def ensure_image_columns():
 
 if __name__ == "__main__":
     if not DB_PATH.exists():
-        raise SystemExit(f"Database not found: {DB_PATH}\nPut this file next to team_netflix.db.")
+        raise SystemExit(
+            f"Database not found: {DB_PATH}\nPut this file next to team_netflix.db.")
     ensure_image_columns()
     print(f"Using database: {DB_PATH}")
     app.run(debug=True, port=5001)
