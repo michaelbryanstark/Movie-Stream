@@ -113,16 +113,19 @@ def main():
                     help="overwrite images that are already set")
     ap.add_argument("--people", action="store_true",
                     help="also fill actor and director photos")
+    ap.add_argument("--db", metavar="PATH",
+                    help="database to fill (default: team_netflix.db next to this script)")
     args = ap.parse_args()
+    db_path = Path(args.db).expanduser() if args.db else DB_PATH
 
     if not CREDENTIAL:
         sys.exit('TMDB_TOKEN is not set. Get a key at themoviedb.org/settings/api, then run:\n'
                  '  export TMDB_TOKEN="your-key-here"\nand run this script again.')
-    if not DB_PATH.exists():
+    if not db_path.exists():
         sys.exit(
-            f"Database not found: {DB_PATH}\nPut this script next to team_netflix.db.")
+            f"Database not found: {db_path}\nPut this script next to team_netflix.db, or pass --db PATH.")
 
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     needed = [("film", "poster_url"), ("tv_show", "poster_url")]
     if args.people:
@@ -132,7 +135,7 @@ def main():
             sys.exit(f"{table}.{col} is missing. Run netflix_frontend.py once (it adds the image "
                      "columns) or run add_images.sql, then try again.")
 
-    print(f"Database: {DB_PATH}" +
+    print(f"Database: {db_path}" +
           ("   [DRY RUN: nothing will be saved]" if args.dry_run else ""))
     missed = []
     missed += fill_titles(db, "film", "/search/movie",

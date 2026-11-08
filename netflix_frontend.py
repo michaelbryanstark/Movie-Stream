@@ -32,8 +32,35 @@ if JELLYFIN_URL and "://" not in JELLYFIN_URL:
 # Jellyfin 10.9+ item page. Older servers use "/web/index.html#!/details?id={id}".
 JELLYFIN_ITEM_PATH = os.environ.get(
     "JELLYFIN_ITEM_PATH", "/web/#/details?id={id}")
-# Set SECRET_KEY in the environment to keep sessions across restarts.
-app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+
+def load_secret_key():
+    """SECRET_KEY from the environment, else a random key saved to .secret_key so sessions survive
+    restarts and every worker process on a host shares the same key. Keep .secret_key out of git."""
+    env = os.environ.get("SECRET_KEY", "").strip()
+    if env:
+        return env
+    path = Path(__file__).parent / ".secret_key"
+    try:
+        if path.exists() and path.read_text().strip():
+            return path.read_text().strip()
+        key = secrets.token_hex(32)
+        path.write_text(key)
+        os.chmod(path, 0o600)
+        return key
+    except OSError:
+        return secrets.token_hex(32)
+
+
+app.secret_key = load_secret_key()
+
+# Public demo mode: export DEMO_MODE=1. Shows a banner and TMDB credit, and turns off image uploads
+# so visitors can't fill the disk. DEMO_LOGIN="email:password" shows a sign-in hint on the login page.
+DEMO_MODE = os.environ.get(
+    "DEMO_MODE", "").strip().lower() in ("1", "true", "yes")
+_email, _sep, _pw = os.environ.get("DEMO_LOGIN", "").partition(":")
+DEMO_LOGIN = (_email.strip(), _pw.strip()) if _sep and _email.strip() else None
+UPLOADS_ENABLED = not DEMO_MODE
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   MAX_CONTENT_LENGTH=3 * 1024 * 1024)
 
@@ -109,7 +136,8 @@ def current_profile(db):
 @app.context_processor
 def shared():
     db = get_db()
-    return {"acct": current_account(db), "prof": current_profile(db), "hue": hue}
+    return {"acct": current_account(db), "prof": current_profile(db), "hue": hue,
+            "demo": DEMO_MODE, "demo_login": DEMO_LOGIN, "uploads": UPLOADS_ENABLED}
 
 
 # ---------- authentication ----------
@@ -378,7 +406,7 @@ def read_profile_form(form, files):
         error = "Profile names can be at most 30 characters."
     elif pic and (len(pic) > 500 or not PIC_OK.match(pic)):
         error = "Picture must be an image URL (https://...) or left blank."
-    f = files.get("picture_file")
+    f = files.get("picture_file") if UPLOADS_ENABLED else None
     if not error and f and f.filename:
         data = f.read(MAX_UPLOAD + 1)
         if len(data) > MAX_UPLOAD:
@@ -542,6 +570,8 @@ main{max-width:1200px;margin:0 auto;padding:1rem 1.5rem 3rem}
 .auth input[type=checkbox]{width:auto;margin-right:.5rem}.row{display:flex;gap:.6rem;margin-top:1rem}
 button.danger{color:#ff6b6b;border-color:#ff6b6b;background:none}
 a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border-radius:6px;font-weight:600}
+.demo{background:#222;border-bottom:1px solid var(--line);padding:.5rem 1.5rem;font-size:.85rem;color:var(--muted);text-align:center}
+.foot{padding:1.5rem;text-align:center;font-size:.8rem;color:var(--muted)}
 </style></head><body>
 <header>
   <a class="brand" href="{{ url_for('home') }}">TEAM NETFLIX</a>
@@ -553,6 +583,8 @@ a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border
     <form method="post" action="{{ url_for('logout') }}"><button>Sign out</button></form>
   {% endif %}
 </header>
+{% if demo %}<div class="demo">Demo site with sample data. Please don't enter real personal information or passwords.
+  {% if demo_login and view in ('login', 'signup') %}Try signing in as <b>{{ demo_login[0] }}</b> / <b>{{ demo_login[1] }}</b>.{% endif %}</div>{% endif %}
 <main>
 {% if view == 'login' %}
   <form class="auth" method="post">
@@ -600,9 +632,9 @@ a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border
     <input id="profile_name" name="profile_name" maxlength="30" value="{{ form.profile_name }}" required autofocus>
     {% if form.profile_picture %}<div class="av" style="width:90px;height:90px;margin:1rem 0 0;background:hsl({{ hue(form.profile_name) }},45%,35%)"><img src="{{ form.profile_picture }}" alt="Current picture" onerror="this.remove()"></div>
     <label style="margin-top:.4rem"><input type="checkbox" name="remove_picture" value="1">Remove current picture</label>{% endif %}
-    <label for="picture_file">Upload a picture (PNG, JPG, GIF or WebP, up to 2 MB)</label>
-    <input id="picture_file" name="picture_file" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
-    <label for="profile_picture">...or paste an image URL (optional)</label>
+    {% if uploads %}<label for="picture_file">Upload a picture (PNG, JPG, GIF or WebP, up to 2 MB)</label>
+    <input id="picture_file" name="picture_file" type="file" accept="image/png,image/jpeg,image/gif,image/webp">{% endif %}
+    <label for="profile_picture">{{ '...or paste an image URL (optional)' if uploads else 'Picture URL (optional)' }}</label>
     <input id="profile_picture" name="profile_picture" maxlength="500" value="{{ form.profile_picture }}" placeholder="https://...">
     <label><input type="checkbox" name="is_kid_profile" value="1" {{ 'checked' if form.is_kid_profile }}>Kids profile</label>
     <div class="row"><button class="primary">Save</button>
@@ -675,7 +707,9 @@ a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border
     </div>
   </div>
 {% endif %}
-</main></body></html>
+</main>
+{% if demo %}<footer class="foot">Movie and TV images and metadata: this product uses the TMDB API but is not endorsed or certified by TMDB.</footer>{% endif %}
+</body></html>
 """
 
 
@@ -690,17 +724,24 @@ def ensure_image_columns():
         have = {r[1] for r in db.execute(f'PRAGMA table_info("{table}")')}
         for col in cols:
             if col not in have:
-                db.execute(
-                    f'ALTER TABLE "{table}" ADD COLUMN "{col}" VARCHAR(500)')
-                print(f"Added column {table}.{col}")
+                try:
+                    db.execute(
+                        f'ALTER TABLE "{table}" ADD COLUMN "{col}" VARCHAR(500)')
+                    print(f"Added column {table}.{col}")
+                except sqlite3.OperationalError:  # another worker added it first
+                    pass
     db.commit()
     db.close()
+
+
+# Runs when a host (PythonAnywhere, gunicorn...) imports this file, not only when you run it directly.
+if DB_PATH.exists():
+    ensure_image_columns()
 
 
 if __name__ == "__main__":
     if not DB_PATH.exists():
         raise SystemExit(
             f"Database not found: {DB_PATH}\nPut this file next to team_netflix.db.")
-    ensure_image_columns()
     print(f"Using database: {DB_PATH}")
     app.run(debug=True, port=5001)
