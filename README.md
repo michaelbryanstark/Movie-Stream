@@ -35,7 +35,7 @@ Open http://127.0.0.1:5001. Keep team_netflix.db in the same folder as the scrip
 Connecting a Jellyfin server
 In Jellyfin, open Dashboard → API Keys, click +, name it, and copy the key.
 Set two environment variables in your terminal, using your server's LAN address (not localhost):
-   export JELLYFIN_URL="http://192.168.1.50:8096"
+   export JELLYFIN_URL="http://YOUR-IP:8096"
    export JELLYFIN_API_KEY="paste-key-here"
 Preview, then import:
    python3 sync_jellyfin.py --dry-run
