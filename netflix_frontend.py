@@ -16,12 +16,22 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from flask import Flask, abort, g, redirect, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 DB_PATH = Path(__file__).parent / "team_netflix.db"
 app = Flask(__name__)
+
+# Optional Jellyfin link: export JELLYFIN_URL="http://192.168.1.50:8096" to get a "Play on Jellyfin"
+# button on titles imported by sync_jellyfin.py. Use your server's LAN address, never "localhost".
+JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").strip().rstrip("/")
+if JELLYFIN_URL and "://" not in JELLYFIN_URL:
+    JELLYFIN_URL = "http://" + JELLYFIN_URL
+# Jellyfin 10.9+ item page. Older servers use "/web/index.html#!/details?id={id}".
+JELLYFIN_ITEM_PATH = os.environ.get(
+    "JELLYFIN_ITEM_PATH", "/web/#/details?id={id}")
 # Set SECRET_KEY in the environment to keep sessions across restarts.
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
@@ -271,7 +281,7 @@ def title(kind, tid):
         abort(404)
     m, db = KINDS[kind], get_db()
     item = db.execute(
-        f"SELECT id, title, duration, genre, poster_url, backdrop_url FROM {m['table']} WHERE id = ?", (tid,)).fetchone()
+        f"SELECT id, title, duration, genre, poster_url, backdrop_url, jellyfin_id FROM {m['table']} WHERE id = ?", (tid,)).fetchone()
     if item is None:
         abort(404)
     cast = [r[0] for r in db.execute(
@@ -281,8 +291,13 @@ def title(kind, tid):
         f"SELECT d.first_name || ' ' || d.last_name FROM director d JOIN {m['directors']} x ON x.director_id = d.id "
         f"WHERE x.{m['col']} = ? ORDER BY d.last_name", (tid,))]
     st = status_sets(db, current_account(db))
+    play_url = None
+    if JELLYFIN_URL and item["jellyfin_id"]:
+        play_url = JELLYFIN_URL + \
+            JELLYFIN_ITEM_PATH.replace(
+                "{id}", quote(item["jellyfin_id"], safe=""))
     return render_template_string(PAGE, view="title", item=dict(item, kind=kind), cast=cast,
-                                  directors=directors, st=st)
+                                  directors=directors, st=st, play_url=play_url)
 
 
 @app.post("/toggle/<what>/<kind>/<int:tid>")
@@ -526,6 +541,7 @@ main{max-width:1200px;margin:0 auto;padding:1rem 1.5rem 3rem}
 .tile form{padding:0 .7rem .7rem}.tile form button{width:100%;font-size:.85rem}
 .auth input[type=checkbox]{width:auto;margin-right:.5rem}.row{display:flex;gap:.6rem;margin-top:1rem}
 button.danger{color:#ff6b6b;border-color:#ff6b6b;background:none}
+a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border-radius:6px;font-weight:600}
 </style></head><body>
 <header>
   <a class="brand" href="{{ url_for('home') }}">TEAM NETFLIX</a>
@@ -651,6 +667,7 @@ button.danger{color:#ff6b6b;border-color:#ff6b6b;background:none}
         </form>{% endfor %}
       </div>
       
+      {% if play_url %}<p><a class="play" href="{{ play_url }}" target="_blank" rel="noopener">&#9654; Play on Jellyfin</a></p>{% endif %}
       <h3>Cast</h3>
       <div class="chips">{% for c in cast %}<span class="chip">{{ c }}</span>{% else %}<span class="muted">No cast listed.</span>{% endfor %}</div>
       <h3>Directed by</h3>
@@ -666,6 +683,8 @@ def ensure_image_columns():
     """Add the image columns if the database predates them (same as add_images.sql; safe to repeat)."""
     wanted = {"film": ("poster_url", "backdrop_url"), "tv_show": ("poster_url", "backdrop_url"),
               "actor": ("photo_url",), "director": ("photo_url",)}
+    wanted["film"] += ("jellyfin_id",)
+    wanted["tv_show"] += ("jellyfin_id",)
     db = sqlite3.connect(DB_PATH)
     for table, cols in wanted.items():
         have = {r[1] for r in db.execute(f'PRAGMA table_info("{table}")')}
