@@ -1,4 +1,4 @@
-# Media Stream Site
+# Media Streaming Site
 
 A Netflix-style web app for browsing a personal movie and TV collection. It has sign-in, multiple profiles per account, search and filters, likes and watched lists, and a one-click **Play on Jellyfin** button for titles imported from your own Jellyfin server.
 
