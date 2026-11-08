@@ -529,7 +529,7 @@ def mylist():
 PAGE = """
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Team Netflix</title>
+<title>Mikeflix</title>
 <style>
 :root{--bg:#141414;--card:#1f1f1f;--text:#ececec;--muted:#9b9b9b;--line:#333;--accent:#e50914}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif}
