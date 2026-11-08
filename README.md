@@ -1,4 +1,4 @@
-# Team Netflix
+# Media Stream Site
 
 A Netflix-style web app for browsing a personal movie and TV collection. It has sign-in, multiple profiles per account, search and filters, likes and watched lists, and a one-click **Play on Jellyfin** button for titles imported from your own Jellyfin server.
 
@@ -44,7 +44,7 @@ Open <http://127.0.0.1:5001>. Keep `team_netflix.db` in the same folder as the s
 1. In Jellyfin, open **Dashboard → API Keys**, click **+**, name it, and copy the key.
 2. Set two environment variables in your terminal, using your server's LAN address (not `localhost`):
    ```
-   export JELLYFIN_URL="http://192.168.1.50:8096"
+   export JELLYFIN_URL="http://YOUR_IP:8096"
    export JELLYFIN_API_KEY="paste-key-here"
    ```
 3. Preview, then import:
