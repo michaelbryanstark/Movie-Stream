@@ -5,7 +5,7 @@ Sync your Jellyfin library into team_netflix.db.
 Setup (put this file next to team_netflix.db; it needs nothing beyond Python 3):
     1. In Jellyfin: Dashboard -> API Keys -> "+" -> name it "Team Netflix" -> copy the key.
     2. export JELLYFIN_URL="http://192.168.1.50:8096"      # your server's LAN address, not localhost
-       export JELLYFIN_API_KEY="paste-the-key-here"
+       export JELLYFIN_API_KEY="39dca71bdfe7456f8ec0c7a69e04b1d0"
     3. python sync_jellyfin.py --dry-run                     # preview, writes nothing
        python sync_jellyfin.py                               # do it
 
@@ -66,7 +66,8 @@ WANTED_COLUMNS = {"film": ["poster_url", "backdrop_url", "jellyfin_id"],
 # ---------------------------------------------------------------- Jellyfin API
 def jf(path, **params):
     """GET one Jellyfin endpoint -> parsed JSON (None on 404). Exits on auth or connection failure."""
-    headers = {"Accept": "application/json", "Authorization": f'MediaBrowser Token="{KEY}"'}
+    headers = {"Accept": "application/json",
+               "Authorization": f'MediaBrowser Token="{KEY}"'}
     url = f"{BASE}{path}?{urllib.parse.urlencode(params)}"
     last = None
     for attempt in range(3):
@@ -138,7 +139,8 @@ def ensure_columns(db):
     for table, cols in WANTED_COLUMNS.items():
         for col in cols:
             if not has_column(db, table, col):
-                db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" VARCHAR(500)')
+                db.execute(
+                    f'ALTER TABLE "{table}" ADD COLUMN "{col}" VARCHAR(500)')
                 print(f"Added column {table}.{col}")
 
 
@@ -157,9 +159,11 @@ def upsert_title(db, meta, item):
         duration = episode_minutes(jid)
     poster, backdrop = image_urls(item)
 
-    row = db.execute(f"SELECT id FROM {t} WHERE jellyfin_id = ?", (jid,)).fetchone()
+    row = db.execute(
+        f"SELECT id FROM {t} WHERE jellyfin_id = ?", (jid,)).fetchone()
     action = "updated"
-    if row is None:  # adopt a same-named title that isn't tied to Jellyfin yet (keeps its likes)
+    # adopt a same-named title that isn't tied to Jellyfin yet (keeps its likes)
+    if row is None:
         row = db.execute(
             f"SELECT id FROM {t} WHERE lower(title) = lower(?) "
             "AND (jellyfin_id IS NULL OR jellyfin_id = '') ORDER BY id LIMIT 1", (name,)).fetchone()
@@ -194,7 +198,8 @@ def find_or_create_person(db, table, person):
                        "AND (photo_url IS NULL OR photo_url = '')", (photo, row["id"]))
         return row["id"]
     parts = name.split(" ")
-    first, last = (" ".join(parts[:-1]), parts[-1]) if len(parts) > 1 else (name, "")
+    first, last = (" ".join(parts[:-1]), parts[-1]
+                   ) if len(parts) > 1 else (name, "")
     new_id = next_id(db, table)
     db.execute(f"INSERT INTO {table} (id, first_name, last_name, photo_url) VALUES (?, ?, ?, ?)",
                (new_id, first, last, photo))
@@ -218,7 +223,8 @@ def sync_people(db, meta, title_id, people):
             continue
         if not db.execute(f"SELECT 1 FROM {link} WHERE {pcol} = ? AND {meta['col']} = ?",
                           (pid, title_id)).fetchone():
-            db.execute(f"INSERT INTO {link} ({pcol}, {meta['col']}) VALUES (?, ?)", (pid, title_id))
+            db.execute(
+                f"INSERT INTO {link} ({pcol}, {meta['col']}) VALUES (?, ?)", (pid, title_id))
 
 
 def prune(db, seen, assume_yes, dry):
@@ -228,7 +234,8 @@ def prune(db, seen, assume_yes, dry):
         return
     stale = {}
     for kind, meta in KINDS.items():
-        rows = db.execute(f"SELECT id, title, jellyfin_id FROM {meta['table']} ORDER BY title").fetchall()
+        rows = db.execute(
+            f"SELECT id, title, jellyfin_id FROM {meta['table']} ORDER BY title").fetchall()
         stale[kind] = [r for r in rows if r["jellyfin_id"] not in seen[kind]]
     total = sum(len(v) for v in stale.values())
     print(f"\n--prune: {total} title(s) in the database are not in Jellyfin:")
@@ -236,7 +243,8 @@ def prune(db, seen, assume_yes, dry):
         for r in rows[:15]:
             print(f"  {KINDS[kind]['label'][:-1]:8} {r['title']}")
         if len(rows) > 15:
-            print(f"  ... and {len(rows) - 15} more {KINDS[kind]['label'].lower()}")
+            print(
+                f"  ... and {len(rows) - 15} more {KINDS[kind]['label'].lower()}")
     if not total:
         return
     if dry:
@@ -253,7 +261,8 @@ def prune(db, seen, assume_yes, dry):
         meta = KINDS[kind]
         for r in rows:
             for table in ("watched", "liked", meta["actors"], meta["directors"]):
-                db.execute(f"DELETE FROM {table} WHERE {meta['col']} = ?", (r["id"],))
+                db.execute(
+                    f"DELETE FROM {table} WHERE {meta['col']} = ?", (r["id"],))
             db.execute(f"DELETE FROM {meta['table']} WHERE id = ?", (r["id"],))
     # people who no longer appear in anything
     db.execute("DELETE FROM actor WHERE id NOT IN (SELECT actor_id FROM film_actors WHERE actor_id IS NOT NULL "
@@ -265,12 +274,16 @@ def prune(db, seen, assume_yes, dry):
 
 # ------------------------------------------------------------------------ main
 def main():
-    ap = argparse.ArgumentParser(description="Sync the Jellyfin library into team_netflix.db.")
-    ap.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing")
-    ap.add_argument("--no-people", action="store_true", help="skip cast and director import")
+    ap = argparse.ArgumentParser(
+        description="Sync the Jellyfin library into team_netflix.db.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="show what would happen, change nothing")
+    ap.add_argument("--no-people", action="store_true",
+                    help="skip cast and director import")
     ap.add_argument("--prune", action="store_true",
                     help="delete database titles that are not in Jellyfin (asks first)")
-    ap.add_argument("--yes", action="store_true", help="don't ask for confirmation with --prune")
+    ap.add_argument("--yes", action="store_true",
+                    help="don't ask for confirmation with --prune")
     args = ap.parse_args()
 
     if not BASE or not KEY:
@@ -279,7 +292,8 @@ def main():
                  '  export JELLYFIN_API_KEY="your-key"\n'
                  "Create the key in Jellyfin under Dashboard -> API Keys.")
     if not DB_PATH.exists():
-        sys.exit(f"Database not found: {DB_PATH}\nPut this script next to team_netflix.db.")
+        sys.exit(
+            f"Database not found: {DB_PATH}\nPut this script next to team_netflix.db.")
 
     info = jf("/System/Info") or {}
     print(f"Connected to Jellyfin {info.get('Version', '?')} "
@@ -289,7 +303,8 @@ def main():
     db.row_factory = sqlite3.Row
     first_run = not has_column(db, "film", "jellyfin_id")
     if not args.dry_run and (first_run or args.prune):
-        bak = DB_PATH.with_name(f"{DB_PATH.name}.bak-{datetime.now():%Y%m%d-%H%M%S}")
+        bak = DB_PATH.with_name(
+            f"{DB_PATH.name}.bak-{datetime.now():%Y%m%d-%H%M%S}")
         dest = sqlite3.connect(bak)
         db.backup(dest)
         dest.close()
@@ -322,8 +337,10 @@ def main():
     print("\nDone." + (" (dry run, nothing saved)" if args.dry_run else " Changes saved."))
     for kind, meta in KINDS.items():
         c = stats[kind]
-        print(f"  {meta['label']}: {c['added']} added, {c['linked']} linked to existing, {c['updated']} refreshed")
-    print('\nNext: start the frontend with  export JELLYFIN_URL="' + BASE + '"  to get the Play button.')
+        print(
+            f"  {meta['label']}: {c['added']} added, {c['linked']} linked to existing, {c['updated']} refreshed")
+    print('\nNext: start the frontend with  export JELLYFIN_URL="' +
+          BASE + '"  to get the Play button.')
     if not args.no_people:
         print("Cast and directors come from Jellyfin's metadata, so they are only as complete as your library's.")
 
