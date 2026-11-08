@@ -1,0 +1,11 @@
+.env
+.secret_key
+team_netflix.db
+test_netflix.db
+*.db.bak-*
+!demo/team_netflix.db
+static/avatars/
+__pycache__/
+*.pyc
+.DS_Store
+EOF
