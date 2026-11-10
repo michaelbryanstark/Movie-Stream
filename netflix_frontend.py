@@ -574,7 +574,7 @@ a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border
 .foot{padding:1.5rem;text-align:center;font-size:.8rem;color:var(--muted)}
 </style></head><body>
 <header>
-  <a class="brand" href="{{ url_for('home') }}">TEAM NETFLIX</a>
+  <a class="brand" href="{{ url_for('home') }}">MIKEFLIX</a>
   {% if acct %}
     {% if prof %}<span class="chip">{% if prof.profile_picture %}<img class="avatar" src="{{ prof.profile_picture }}" alt="" onerror="this.remove()">{% endif %}{{ prof.profile_name }}{% if prof.is_kid_profile %} (kids){% endif %}</span>
     <a class="muted" href="{{ url_for('mylist') }}">My list</a>
@@ -584,7 +584,7 @@ a.play{display:inline-block;background:var(--accent);padding:.6rem 1.2rem;border
   {% endif %}
 </header>
 {% if demo %}<div class="demo">Demo site with sample data. Please don't enter real personal information or passwords.
-  {% if demo_login and view in ('login', 'signup') %}Try signing in as <b>{{ demo_login[0] }}</b> / <b>{{ demo_login[1] }}</b>.{% endif %}</div>{% endif %}
+
 <main>
 {% if view == 'login' %}
   <form class="auth" method="post">
